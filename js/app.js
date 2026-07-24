@@ -43,6 +43,43 @@ const els = {
   followupEmail: document.getElementById("followupEmail"),
 };
 
+const PREFILL_MAP = {
+  nome_responsavel: "nome",
+  nome: "nome",
+  empresa: "empresa",
+  cnpj: "cnpj",
+  email: "email",
+  telefone: "telefone",
+  whatsapp: "telefone",
+  cidade: "cidade",
+  uf: "uf",
+  categoria: "categoria",
+};
+
+function getQueryParams() {
+  try {
+    return new URLSearchParams(window.location.search);
+  } catch {
+    return new URLSearchParams();
+  }
+}
+
+function applyPrefillFromQuery() {
+  const params = getQueryParams();
+  let hasPrefill = false;
+
+  for (const [paramName, fieldId] of Object.entries(PREFILL_MAP)) {
+    const value = params.get(paramName);
+    if (!value) continue;
+    const input = document.getElementById(fieldId);
+    if (!input) continue;
+    input.value = value;
+    hasPrefill = true;
+  }
+
+  return hasPrefill;
+}
+
 function apiUrl(path) {
   return API_CONFIG.baseUrl ? API_CONFIG.baseUrl.replace(/\/$/, "") + path : null;
 }
@@ -405,6 +442,7 @@ els.btnEditarCadastro.addEventListener("click", goEditCadastro);
 /* ---------- Inicialização ---------- */
 
 (function init() {
+  applyPrefillFromQuery();
   const session = loadSession();
   if (session) {
     showMensagens(session, false);
