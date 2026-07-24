@@ -56,6 +56,32 @@ const PREFILL_MAP = {
   categoria: "categoria",
 };
 
+// Outros sites (ex.: autozap-partner) usam categorias próprias, diferentes
+// das opções deste formulário. Traduz pro equivalente mais próximo.
+const CATEGORIA_ALIASES = {
+  "capinhas": "Celulares e acessórios",
+  "películas": "Celulares e acessórios",
+  "peliculas": "Celulares e acessórios",
+  "acessórios": "Celulares e acessórios",
+  "acessorios": "Celulares e acessórios",
+  "peças e assistência": "Peças e componentes",
+  "pecas e assistencia": "Peças e componentes",
+  "assistência técnica": "Peças e componentes",
+  "assistencia tecnica": "Peças e componentes",
+  "outros produtos": "Outro",
+};
+
+function resolveCategoriaValue(rawValue, selectEl) {
+  const options = Array.from(selectEl.options).map((opt) => opt.value);
+  if (options.includes(rawValue)) return rawValue;
+
+  const normalized = rawValue.trim().toLowerCase();
+  const exactCi = options.find((opt) => opt.toLowerCase() === normalized);
+  if (exactCi) return exactCi;
+
+  return CATEGORIA_ALIASES[normalized] || "";
+}
+
 function getQueryParams() {
   try {
     return new URLSearchParams(window.location.search);
@@ -73,7 +99,18 @@ function applyPrefillFromQuery() {
     if (!value) continue;
     const input = document.getElementById(fieldId);
     if (!input) continue;
-    input.value = value;
+
+    if (fieldId === "categoria" && input.tagName === "SELECT") {
+      const resolved = resolveCategoriaValue(value, input);
+      if (!resolved) continue;
+      input.value = resolved;
+    } else if (fieldId === "telefone") {
+      input.value = maskPhone(value);
+    } else if (fieldId === "cnpj") {
+      input.value = maskCnpj(value);
+    } else {
+      input.value = value;
+    }
     hasPrefill = true;
   }
 
