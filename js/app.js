@@ -84,7 +84,14 @@ function resolveCategoriaValue(rawValue, selectEl) {
 
 function getQueryParams() {
   try {
-    return new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(window.location.search);
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    for (const [key, value] of fragment) params.set(key, value);
+    const cleaned = new URL(window.location.href);
+    for (const key of [...Object.keys(PREFILL_MAP), "origem"]) cleaned.searchParams.delete(key);
+    if (Object.keys(PREFILL_MAP).some((key) => fragment.has(key))) cleaned.hash = "";
+    window.history.replaceState(null, "", cleaned.pathname + cleaned.search + cleaned.hash);
+    return params;
   } catch {
     return new URLSearchParams();
   }
@@ -131,6 +138,7 @@ async function postJson(path, payload) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(20000),
     });
     let data = null;
     try {
@@ -138,7 +146,7 @@ async function postJson(path, payload) {
     } catch {
       data = null;
     }
-    return { ok: res.ok, offline: false, data };
+    return { ok: res.ok && data?.ok !== false && data !== null, offline: false, data };
   } catch (err) {
     return { ok: false, offline: true, data: null };
   }
@@ -301,7 +309,7 @@ function showMensagens(session, animate = true) {
 }
 
 function updateFollowupState(session) {
-  const alreadySent = loadMessages(session).some((msg) => msg.from === "user");
+  const alreadySent = loadMessages(session).some((msg) => msg.from === "user" && msg.status === "sent");
   if (alreadySent) {
     els.chatInputRow.hidden = true;
     els.mensagemStatus.hidden = true;
@@ -355,6 +363,12 @@ function renderChat(session) {
     const bubble = document.createElement("div");
     bubble.className = `chat-bubble ${msg.from === "user" ? "user" : "bot"}`;
     bubble.innerHTML = `${escapeHtml(msg.text)}<span class="ts">${formatTimestamp(msg.ts)}</span>`;
+    if (msg.from === "user") {
+      const status = document.createElement("span");
+      status.className = "ts";
+      status.textContent = msg.status === "sent" ? "Envio confirmado" : msg.status === "pending" ? "Aguardando confirmação" : "Envio não confirmado";
+      bubble.appendChild(status);
+    }
     els.chatLog.appendChild(bubble);
   });
   els.chatLog.scrollTop = els.chatLog.scrollHeight;
@@ -369,6 +383,12 @@ function escapeHtml(str) {
 async function sendMessage() {
   const session = loadSession();
   if (!session) return;
+  if (els.btnEnviarMensagem.disabled) return;
+  if (!session.leadId) {
+    els.mensagemStatus.textContent = "Confirme seu cadastro antes de enviar a mensagem.";
+    goEditCadastro();
+    return;
+  }
 
   const text = els.mensagemTexto.value.trim();
   if (!text) return;
@@ -376,27 +396,37 @@ async function sendMessage() {
   els.btnEnviarMensagem.disabled = true;
   els.btnEnviarMensagem.classList.add("is-loading");
 
-  const message = { from: "user", text, ts: new Date().toISOString() };
   const messages = loadMessages(session);
-  messages.push(message);
+  let message = messages.find((msg) => msg.from === "user" && msg.status !== "sent" && msg.text === text);
+  if (!message) {
+    message = { from: "user", text, ts: new Date().toISOString(), status: "pending", clientMessageId: crypto.randomUUID() };
+    messages.push(message);
+  }
+  message.status = "pending";
+  message.clientMessageId ||= crypto.randomUUID();
   saveMessages(session, messages);
   renderChat(session);
-  els.mensagemTexto.value = "";
 
   let result = { ok: false, offline: true, data: null };
   if (session.leadId) {
-    result = await postJson(API_CONFIG.endpoints.mensagens(session.leadId), { text });
+    result = await postJson(API_CONFIG.endpoints.mensagens(session.leadId), { text, clientMessageId: message.clientMessageId });
   }
 
   if (result.ok) {
+    message.status = "sent";
+    saveMessages(session, messages);
+    els.mensagemTexto.value = "";
     updateFollowupState(session);
   } else {
+    message.status = "failed";
+    saveMessages(session, messages);
     els.mensagemStatus.textContent =
       "Não foi possível confirmar com o servidor agora. Tente novamente em instantes.";
     els.mensagemStatus.className = "status-banner warn";
     els.mensagemStatus.hidden = false;
   }
 
+  renderChat(session);
   els.btnEnviarMensagem.disabled = false;
   els.btnEnviarMensagem.classList.remove("is-loading");
 }
@@ -440,21 +470,18 @@ els.formCadastro.addEventListener("submit", async (e) => {
 
   if (result.ok && result.data && result.data.leadId) {
     data.leadId = result.data.leadId;
-  }
-  saveSession(data);
-
-  if (result.ok) {
+    saveSession(data);
     els.cadastroStatus.textContent = "Cadastro confirmado.";
     els.cadastroStatus.className = "status-banner ok";
+    showMensagens(data);
   } else {
     els.cadastroStatus.textContent =
-      "Cadastro salvo localmente. Não foi possível confirmar com o servidor agora, mas você pode continuar.";
+      "Não foi possível confirmar o cadastro. Seus dados continuam no formulário; tente novamente.";
     els.cadastroStatus.className = "status-banner warn";
   }
 
   els.btnCadastrar.disabled = false;
   els.btnCadastrar.classList.remove("is-loading");
-  showMensagens(data);
 });
 
 /* ---------- Editar / trocar cadastro ---------- */
@@ -481,8 +508,12 @@ els.btnEditarCadastro.addEventListener("click", goEditCadastro);
 (function init() {
   applyPrefillFromQuery();
   const session = loadSession();
-  if (session) {
+  if (session && session.leadId) {
     showMensagens(session, false);
+    const pending = loadMessages(session).find((msg) => msg.from === "user" && msg.status !== "sent");
+    if (pending) els.mensagemTexto.value = pending.text;
+  } else if (session) {
+    goEditCadastro();
   } else {
     showCadastro(false);
   }
